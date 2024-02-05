@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -45,7 +46,7 @@ func (c *Compiler) FastGetVariables(t *ast.Task, call ast.Call) (*ast.Vars, erro
 }
 
 func (c *Compiler) getVariables(t *ast.Task, call *ast.Call, evaluateShVars bool) (*ast.Vars, error) {
-	result := GetEnviron()
+	result := &ast.Vars{}
 	if t != nil {
 		specialVars, err := c.getSpecialVars(t)
 		if err != nil {
@@ -120,6 +121,7 @@ func (c *Compiler) getVariables(t *ast.Task, call *ast.Call, evaluateShVars bool
 	rangeFunc := getRangeFunc(c.Dir)
 
 	var taskRangeFunc func(k string, v ast.Var) error
+
 	if t != nil {
 		// NOTE(@andreynering): We're manually joining these paths here because
 		// this is the raw task, not the compiled one.
@@ -130,34 +132,34 @@ func (c *Compiler) getVariables(t *ast.Task, call *ast.Call, evaluateShVars bool
 		}
 		dir = filepathext.SmartJoin(c.Dir, dir)
 		taskRangeFunc = getRangeFunc(dir)
-	}
 
-	if err := c.TaskfileEnv.Range(rangeFunc); err != nil {
-		return nil, err
-	}
-	if err := c.TaskfileVars.Range(rangeFunc); err != nil {
-		return nil, err
-	}
-	if t != nil {
 		if err := t.IncludedTaskfileVars.Range(taskRangeFunc); err != nil {
 			return nil, err
 		}
 		if err := t.IncludeVars.Range(rangeFunc); err != nil {
 			return nil, err
 		}
+		if err := t.Vars.Range(taskRangeFunc); err != nil {
+			return nil, err
+		}
 	}
-
-	if t == nil || call == nil {
-		return result, nil
-	}
-
-	if err := call.Vars.Range(rangeFunc); err != nil {
+	if err := c.TaskfileVars.Range(rangeFunc); err != nil {
 		return nil, err
 	}
-	if err := t.Vars.Range(taskRangeFunc); err != nil {
+	if err := c.TaskfileEnv.Range(rangeFunc); err != nil {
 		return nil, err
 	}
 
+	for _, e := range os.Environ() {
+		keyVal := strings.SplitN(e, "=", 2)
+		key, val := keyVal[0], keyVal[1]
+		result.Set(key, ast.Var{Value: val})
+	}
+	if call != nil {
+		if err := call.Vars.Range(rangeFunc); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
 }
 
